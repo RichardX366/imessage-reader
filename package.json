@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "postinstall": "patch-package && cp -r node_modules/sql.js/dist/* public/dist/"
+    "postinstall": "patch-package && ls && pwd && cp -r node_modules/sql.js/dist/* public/dist/"
   },
   "dependencies": {
     "@mantine/core": "^8.2.1",
