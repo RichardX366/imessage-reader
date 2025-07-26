@@ -9,14 +9,14 @@ import {
   messagesQuery,
   useSQL,
 } from '@/helpers/sql';
-import { Chat } from '@/helpers/types';
+import { Chat, Message } from '@/helpers/types';
 import { FileInput } from '@mantine/core';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { db } from '@/helpers/db';
-import { useLiveQuery } from 'dexie-react-hooks';
+import InfiniteScroll from 'react-infinite-scroll-component';
 dayjs.extend(relativeTime);
 
 const Home: React.FC = () => {
@@ -26,17 +26,23 @@ const Home: React.FC = () => {
   const [loaded, setLoaded] = useState(false);
   const [chats, setChats] = useState<Chat[]>([]);
   const [selectedChats, setSelectedChats] = useState<Chat[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [messageLength, setMessageLength] = useState<number>(0);
 
-  const messages = useLiveQuery(
-    () =>
-      db.messages
-        .where('chatId')
-        .anyOf(selectedChats.map((chat) => chat.id))
-        .reverse()
-        .sortBy('timestamp'),
-    [selectedChats],
-    [],
-  );
+  const loadMoreMessages = async (
+    selectedChats: Chat[],
+    messages: Message[],
+  ) => {
+    const selectedChatIds = selectedChats.map((chat) => chat.id);
+    const newMessages = await db.messages
+      .orderBy('timestamp')
+      .filter((msg) => selectedChatIds.includes(msg.chatId))
+      .reverse()
+      .offset(messages.length)
+      .limit(100)
+      .toArray();
+    setMessages(messages.concat(newMessages));
+  };
 
   const { initDatabase, runQuery, deleteDatabase } = useSQL();
 
@@ -224,11 +230,24 @@ const Home: React.FC = () => {
             <button
               key={id}
               className='p-4 hover:bg-gray-100 cursor-pointer flex items-center w-full text-left gap-2 disabled:bg-gray-100'
-              onClick={() =>
-                setSelectedChats(
-                  chats.filter((c) => chatToId(c) === chatToId(chat)),
-                )
-              }
+              onClick={async () => {
+                const newSelectedChats = chats.filter(
+                  (c) => chatToId(c) === chatToId(chat),
+                );
+                setMessageLength(0);
+                setSelectedChats(newSelectedChats);
+                setMessages([]);
+                loadMoreMessages(newSelectedChats, []);
+                document.querySelector('#messagesContainer')?.scrollTo({
+                  top: Number.POSITIVE_INFINITY,
+                });
+                setMessageLength(
+                  await db.messages
+                    .where('chatId')
+                    .anyOf(newSelectedChats.map((c) => c.id))
+                    .count(),
+                );
+              }}
               disabled={selectedChats[0]?.id === id}
             >
               <div className='flex-1'>
@@ -249,34 +268,54 @@ const Home: React.FC = () => {
         <div className='text-lg p-4 bg-gray-100 absolute top-0 inset-x-0'>
           {selectedChats[0] ? selectedChats[0].name : 'No chat selected'}
         </div>
-        <div className='overflow-y-scroll max-h-[calc(100vh-var(--spacing)*24)] mt-16 flex flex-col gap-1 p-4'>
-          {messages.map(({ id, from, isFromMe, text, timestamp }, i) => (
-            <div
-              key={id}
-              className={
-                'flex flex-col ' + (isFromMe ? 'items-end' : 'items-start')
-              }
-            >
-              {(i === 0 ||
-                messages[i - 1].timestamp - timestamp > 3600 * 1000) && (
-                <p className='text-xs text-gray-400 mb-1 w-full text-center'>
-                  {dayjs(timestamp).format('MMM D, YYYY h:mm A')}
-                </p>
-              )}
-              {selectedChats[0].participants.length > 1 &&
-                messages[i - 1]?.from !== from && (
-                  <p className='text-sm text-gray-500 mt-2'>{from}</p>
-                )}
+        <div
+          className='overflow-y-auto max-h-[calc(100vh-var(--spacing)*24)] mt-16 flex flex-col-reverse'
+          id='messagesContainer'
+        >
+          <InfiniteScroll
+            dataLength={messages.length}
+            next={() => loadMoreMessages(selectedChats, messages)}
+            hasMore={messageLength > messages.length}
+            loader={
+              <p className='text-center text-gray-500 mt-2'>Loading more...</p>
+            }
+            scrollableTarget='messagesContainer'
+            inverse
+            className='flex flex-col-reverse gap-1 p-4'
+          >
+            {messages.map(({ id, from, isFromMe, text, timestamp }, i) => (
               <div
+                key={id}
                 className={
-                  'p-2 rounded-lg inline-block ' +
-                  (isFromMe ? 'bg-blue-100 ml-auto' : 'bg-gray-100 mr-auto')
+                  'flex flex-col ' + (isFromMe ? 'items-end' : 'items-start')
                 }
               >
-                <p>{text}</p>
+                {(i === 0 ||
+                  messages[i - 1].timestamp - timestamp > 3600 * 1000) && (
+                  <p className='text-xs text-gray-400 mb-1 w-full text-center'>
+                    {dayjs(timestamp).format('MMM D, YYYY h:mm A')}
+                  </p>
+                )}
+                {selectedChats[0].participants.length > 1 &&
+                  messages[i - 1]?.from !== from && (
+                    <p className='text-sm text-gray-500 mt-2'>{from}</p>
+                  )}
+                <div
+                  className={
+                    'p-2 rounded-lg inline-block max-w-2/3 ' +
+                    (isFromMe ? 'bg-blue-100 ml-auto' : 'bg-gray-100 mr-auto')
+                  }
+                >
+                  {text.split('\n').map((line, i) => (
+                    <p key={i}>
+                      {line}
+                      <br />
+                    </p>
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </InfiniteScroll>
         </div>
       </div>
     </div>
